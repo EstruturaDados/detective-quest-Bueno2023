@@ -8,155 +8,364 @@
 */
 
 #include <stdio.h>
-#include <stdlib.h> // Preciso disso pro malloc e free
-#include <string.h> // E isso pro strcpy, pra colocar os nomes nas salas
+#include <stdlib.h>
+#include <string.h>
+#include <ctype.h>
 
-// Criei uma struct pra representar cada sala da mansão.
-// Ela tem o nome da sala e dois ponteiros, um pra esquerda e outro pra direita.
+// --- Constantes e Definições de Estruturas ---
+
+// Definimos o tamanho da nossa tabela hash. Um número primo pequeno é uma boa escolha.
+#define HASH_SIZE 11
+
+// Estrutura para os cômodos da mansão (Árvore Binária Simples)
 typedef struct Sala {
     char nome[50];
     struct Sala *esquerda;
     struct Sala *direita;
 } Sala;
 
-// --- Funções que o programa vai usar ---
+// Estrutura para os nós da Árvore de Busca de Pistas (BST)
+typedef struct PistaNode {
+    char pista[100];
+    struct PistaNode *esquerda;
+    struct PistaNode *direita;
+} PistaNode;
+
+// Estrutura para os nós da Tabela Hash (Lida com colisões usando lista encadeada)
+typedef struct HashNode {
+    char pista[100];
+    char suspeito[50];
+    struct HashNode *proximo;
+} HashNode;
+
+
+// --- Protótipos das Funções ---
+
+// Funções do Mapa da Mansão
 Sala* criarSala(char* nome);
-void navegar(Sala* sala_atual);
-void limparMemoria(Sala* sala_atual);
+void explorarSalas(Sala* salaAtual, PistaNode** raizPistas, HashNode** tabelaSuspeitos);
+void liberarMapa(Sala* salaAtual);
+
+// Funções da Árvore de Busca de Pistas (BST)
+PistaNode* inserirPista(PistaNode* raiz, char* pista);
+void mostrarPistasColetadas(PistaNode* raiz);
+void liberarPistas(PistaNode* raiz);
+
+// Funções da Tabela Hash
+unsigned int hashFunction(char* str);
+void inserirNaHash(HashNode** tabela, char* pista, char* suspeito);
+char* encontrarSuspeito(HashNode** tabela, char* pista);
+void liberarTabelaHash(HashNode** tabela);
+
+// Funções de Lógica do Jogo
+void montarCenario(Sala** mansao, HashNode** tabela);
+int contarPistasParaSuspeito(PistaNode* raizPistas, char* suspeito, HashNode** tabela);
+void verificarSuspeitoFinal(PistaNode* raizPistas, HashNode** tabela);
 
 
-// --- Programa Principal ---
+// --- Função Principal ---
 int main() {
+    // Inicializando as raízes das nossas estruturas de dados
+    Sala* mansao = NULL;
+    PistaNode* pistasColetadas = NULL;
+    HashNode* tabelaSuspeitos[HASH_SIZE] = {NULL}; // Inicializa a tabela com NULOs
+
+    // Monta o mapa da mansão e preenche a tabela de evidências
+    montarCenario(&mansao, tabelaSuspeitos);
+
+    // Inicia a exploração do jogo
+    printf("--- Detective Quest: O Veredito Final ---\n");
+    printf("O relógio badala meia-noite. É hora de desvendar este mistério.\n");
+    explorarSalas(mansao, &pistasColetadas, tabelaSuspeitos);
+
+    // Inicia a fase de acusação após o jogador sair da exploração
+    verificarSuspeitoFinal(pistasColetadas, tabelaSuspeitos);
+
+    // Limpa toda a memória alocada para evitar vazamentos
+    liberarMapa(mansao);
+    liberarPistas(pistasColetadas);
+    liberarTabelaHash(tabelaSuspeitos);
     
-    // 1. Montando o mapa da mansão
-    // Criei a primeira sala, que vai ser o começo do jogo.
-    Sala *hallDeEntrada = criarSala("Hall de Entrada");
-
-    // Agora vou conectando as outras salas, uma por uma.
-    // A sala da esquerda do Hall é a Sala de Jantar, a da direita é a Biblioteca.
-    hallDeEntrada->esquerda = criarSala("Sala de Jantar");
-    hallDeEntrada->direita = criarSala("Biblioteca");
-
-    // Continuei criando os caminhos a partir das salas novas
-    hallDeEntrada->esquerda->esquerda = criarSala("Cozinha");
-    hallDeEntrada->direita->esquerda = criarSala("Escritorio");
-    hallDeEntrada->direita->direita = criarSala("Sala de Musica");
-    
-    // Adicionei um caminho mais fundo pra ter mais o que explorar
-    hallDeEntrada->direita->esquerda->direita = criarSala("Passagem Secreta");
-
-    // 2. Começando o jogo
-    printf("--- Detective Quest ---\n");
-    printf("Voce e um detetive investigando a misteriosa Mansao Enigma.\n");
-    printf("Cuidado onde pisa...\n");
-
-    // Chamo a função de navegação, começando pelo Hall de Entrada.
-    navegar(hallDeEntrada);
-
-    // 3. Fim de jogo
-    // Depois que o jogador sai, é importante limpar a memória que o malloc usou.
-    limparMemoria(hallDeEntrada);
-    
-    printf("\nVoce decidiu se retirar por enquanto. O misterio aguarda...\n");
-
+    printf("\nO caso está encerrado por enquanto...\n");
     return 0;
 }
 
 
-// Função para criar uma sala nova na memória
-Sala* criarSala(char* nome) {
-    // Pede um espaco na memoria do tamanho da struct Sala
-    Sala* nova_sala = (Sala*) malloc(sizeof(Sala));
+// ===============================================================
+//               IMPLEMENTAÇÃO DAS FUNÇÕES DO JOGO
+// ===============================================================
 
-    // Copia o nome que a gente passou para dentro da struct
-    strcpy(nova_sala->nome, nome);
+/**
+ * @brief Monta o mapa da mansão e preenche a tabela hash com as evidências.
+ * Separei essa lógica do main para deixar o código mais organizado.
+ */
+void montarCenario(Sala** mansao, HashNode** tabela) {
+    // 1. Criando o mapa da mansão (Árvore Binária)
+    *mansao = criarSala("Hall de Entrada");
+    (*mansao)->esquerda = criarSala("Biblioteca");
+    (*mansao)->direita = criarSala("Sala de Jantar");
+    (*mansao)->esquerda->direita = criarSala("Escritorio");
+    (*mansao)->direita->esquerda = criarSala("Cozinha");
+    (*mansao)->direita->direita = criarSala("Jardim de Inverno");
+    (*mansao)->esquerda->direita->esquerda = criarSala("Sala do Cofre");
 
-    // Quando uma sala é criada, ela não tem caminhos ainda.
-    nova_sala->esquerda = NULL;
-    nova_sala->direita = NULL;
-    
-    // Deixei esse printf aqui pra testar se as salas estavam sendo criadas certo.
-    // printf("DEBUG: Sala '%s' criada no endereco %p\n", nome, nova_sala);
-
-    return nova_sala;
+    // 2. Preenchendo a Tabela Hash com todas as pistas e seus suspeitos
+    // Estas são as "verdades" do jogo.
+    printf("Analisando relatórios e montando a base de evidências...\n\n");
+    inserirNaHash(tabela, "Carta amassada com ameacas", "Mordomo Alistair");
+    inserirNaHash(tabela, "Frasco de veneno vazio", "Chef Gustav");
+    inserirNaHash(tabela, "Documento financeiro suspeito", "Conde Frederick");
+    inserirNaHash(tabela, "Peca de xadrez de marfim quebrada", "Conde Frederick");
+    inserirNaHash(tabela, "Luva de jardinagem suja de terra", "Jardineira Beatrice");
+    inserirNaHash(tabela, "Faca de cozinha com vestigios estranhos", "Chef Gustav");
 }
 
 
-// Função principal da navegação. É recursiva.
-void navegar(Sala* sala_atual) {
-    // Se a sala não existir (caminho vazio), a gente para.
-    if (sala_atual == NULL) {
-        return;
+/**
+ * @brief Cria um novo cômodo (nó) para a árvore da mansão.
+ */
+Sala* criarSala(char* nome) {
+    Sala* novaSala = (Sala*) malloc(sizeof(Sala));
+    strcpy(novaSala->nome, nome);
+    novaSala->esquerda = novaSala->direita = NULL;
+    return novaSala;
+}
+
+
+/**
+ * @brief Função principal de navegação e coleta de pistas.
+ * A função recebe um ponteiro para ponteiro para a raiz das pistas (**),
+ * para que possamos modificar a árvore de pistas original.
+ */
+void explorarSalas(Sala* salaAtual, PistaNode** raizPistas, HashNode** tabelaSuspeitos) {
+    if (salaAtual == NULL) return;
+
+    printf("\n------------------------------------------------\n");
+    printf("Voce esta em: %s\n", salaAtual->nome);
+
+    // Lógica para encontrar pistas em salas específicas
+    char* pistaEncontrada = NULL;
+    if (strcmp(salaAtual->nome, "Escritorio") == 0) {
+        pistaEncontrada = "Carta amassada com ameacas";
+    } else if (strcmp(salaAtual->nome, "Cozinha") == 0) {
+        pistaEncontrada = "Frasco de veneno vazio";
+    } else if (strcmp(salaAtual->nome, "Sala do Cofre") == 0) {
+        pistaEncontrada = "Documento financeiro suspeito";
+    } else if (strcmp(salaAtual->nome, "Jardim de Inverno") == 0) {
+        pistaEncontrada = "Luva de jardinagem suja de terra";
     }
 
-    printf("\n-----------------------------------\n");
-    printf("Voce esta em: %s\n", sala_atual->nome);
+    if (pistaEncontrada) {
+        printf(">> Voce encontrou uma pista: %s\n", pistaEncontrada);
+        *raizPistas = inserirPista(*raizPistas, pistaEncontrada);
+    } else {
+        printf("Voce olha ao redor, mas nao encontra nada de novo.\n");
+    }
 
-    // Verifica se a sala é um beco sem saída (não tem caminho nem pra esq. nem pra dir.)
-    if (sala_atual->esquerda == NULL && sala_atual->direita == NULL) {
-        printf("Parece que nao ha mais para onde ir a partir daqui.\n");
+    if (salaAtual->esquerda == NULL && salaAtual->direita == NULL) {
+        printf("Este é o fim deste caminho.\n");
         return;
     }
 
     char escolha;
-    int escolhaValida = 0; // Uma "flag" pra saber se o jogador digitou algo certo
-
-    // Usei um do-while pra garantir que ele peça a escolha pelo menos uma vez
-    // e continue pedindo se o jogador digitar algo errado.
-    do {
-        printf("\nEscolha seu caminho:\n");
-
-        if (sala_atual->esquerda) { // se o ponteiro da esquerda não for nulo
-            printf(" -> Digite 'e' para ir para a ESQUERDA (%s)\n", sala_atual->esquerda->nome);
-        }
-        if (sala_atual->direita) { // se o ponteiro da direita não for nulo
-            printf(" -> Digite 'd' para ir para a DIREITA (%s)\n", sala_atual->direita->nome);
-        }
-        printf(" -> Digite 's' para SAIR da mansao\n");
-        printf("O que voce faz? ");
-        
+    while (1) {
+        printf("\nEscolha seu proximo passo:\n");
+        if (salaAtual->esquerda) printf(" (e) Esquerda: %s\n", salaAtual->esquerda->nome);
+        if (salaAtual->direita) printf(" (d) Direita: %s\n", salaAtual->direita->nome);
+        printf(" (s) Sair para analisar as pistas e fazer uma acusacao\n");
+        printf("Sua escolha: ");
         scanf(" %c", &escolha);
 
-        switch (escolha) {
-            case 'e':
-                if (sala_atual->esquerda) {
-                    navegar(sala_atual->esquerda); // Chama a função de novo para a sala da esquerda
-                    escolhaValida = 1;
-                } else {
-                    printf("A porta da esquerda esta trancada...\n");
-                }
-                break;
-            case 'd':
-                if (sala_atual->direita) {
-                    navegar(sala_atual->direita); // Chama a função de novo para a sala da direita
-                    escolhaValida = 1;
-                } else {
-                    printf("O caminho da direita esta bloqueado...\n");
-                }
-                break;
-            case 's':
-                escolhaValida = 1; // Sair também é uma opção válida
-                break;
-            default:
-                printf("Comando nao reconhecido, detetive. Tente novamente.\n");
-                break;
+        if (escolha == 'e' && salaAtual->esquerda) {
+            explorarSalas(salaAtual->esquerda, raizPistas, tabelaSuspeitos);
+            break;
+        } else if (escolha == 'd' && salaAtual->direita) {
+            explorarSalas(salaAtual->direita, raizPistas, tabelaSuspeitos);
+            break;
+        } else if (escolha == 's') {
+            return;
+        } else {
+            printf("Comando invalido, detetive!\n");
         }
-    // O loop continua enquanto a escolha não for válida (e não for 's' para sair)
-    } while (!escolhaValida); 
+    }
 }
 
 
-// Função para limpar a memória usada pelo mapa.
-// Ela vai liberando as salas de baixo pra cima pra não dar erro.
-void limparMemoria(Sala* sala_atual) {
-    if (sala_atual == NULL) {
-        return;
+/**
+ * @brief Insere uma nova pista na Árvore de Busca Binária (BST).
+ * A recursão torna a inserção elegante. A árvore mantém as pistas em ordem alfabética.
+ */
+PistaNode* inserirPista(PistaNode* raiz, char* pista) {
+    // Caso base: se a árvore estiver vazia, cria um novo nó e o retorna como a nova raiz.
+    if (raiz == NULL) {
+        PistaNode* novo = (PistaNode*) malloc(sizeof(PistaNode));
+        strcpy(novo->pista, pista);
+        novo->esquerda = novo->direita = NULL;
+        return novo;
     }
     
-    // Primeiro limpa os filhos
-    limparMemoria(sala_atual->esquerda);
-    limparMemoria(sala_atual->direita);
+    // Se a pista já existe, não faz nada para evitar duplicatas.
+    if (strcmp(pista, raiz->pista) == 0) {
+        printf("(Esta pista ja foi registrada no seu caderno.)\n");
+        return raiz;
+    }
+
+    // Recursão: decide se vai para a sub-árvore esquerda ou direita.
+    if (strcmp(pista, raiz->pista) < 0) {
+        raiz->esquerda = inserirPista(raiz->esquerda, pista);
+    } else {
+        raiz->direita = inserirPista(raiz->direita, pista);
+    }
+    return raiz;
+}
+
+
+/**
+ * @brief Função da fase final: acusação.
+ * Lista as pistas e verifica se a acusação é válida.
+ */
+void verificarSuspeitoFinal(PistaNode* raizPistas, HashNode** tabela) {
+    printf("\n\n================ O JULGAMENTO ================\n");
+    printf("Voce reune todos na sala principal. E hora da verdade.\n");
     
-    // Depois que os filhos foram liberados, libera o pai
-    free(sala_atual);
+    if (raizPistas == NULL) {
+        printf("Voce nao coletou nenhuma pista. O caso continua um misterio.\n");
+        return;
+    }
+
+    printf("Suas pistas coletadas sao:\n");
+    mostrarPistasColetadas(raizPistas);
+    
+    printf("\nOs suspeitos sao: Mordomo Alistair, Chef Gustav, Conde Frederick, Jardineira Beatrice.\n");
+    printf("Detetive, digite o nome e sobrenome do culpado: ");
+    
+    char acusado[50];
+    // Leitura do nome completo do acusado (lê até o \n)
+    scanf(" %[^\n]", acusado);
+
+    int contagem = contarPistasParaSuspeito(raizPistas, acusado, tabela);
+
+    printf("\nAnalisando as evidencias contra %s...\n", acusado);
+    printf("Voce encontrou %d pista(s) que apontam para este suspeito.\n", contagem);
+
+    if (contagem >= 2) {
+        printf("\nVEREDITO: CULPADO! Com %d provas contundentes, voce desvendou o caso!\n", contagem);
+    } else {
+        printf("\nVEREDITO: INOCENTE! Suas provas sao insuficientes. O verdadeiro culpado escapa...\n");
+    }
+}
+
+
+/**
+ * @brief Conta recursivamente quantas pistas na BST apontam para um suspeito.
+ * Combina a travessia na BST com a consulta na Tabela Hash.
+ */
+int contarPistasParaSuspeito(PistaNode* raizPistas, char* suspeito, HashNode** tabela) {
+    if (raizPistas == NULL) {
+        return 0;
+    }
+
+    // Procura o suspeito associado à pista do nó atual
+    char* suspeitoDaPista = encontrarSuspeito(tabela, raizPistas->pista);
+    int contagemAtual = 0;
+    if (suspeitoDaPista && strcmp(suspeitoDaPista, suspeito) == 0) {
+        contagemAtual = 1;
+    }
+
+    // Soma o resultado deste nó com os resultados das sub-árvores
+    return contagemAtual + 
+           contarPistasParaSuspeito(raizPistas->esquerda, suspeito, tabela) +
+           contarPistasParaSuspeito(raizPistas->direita, suspeito, tabela);
+}
+
+
+// ===============================================================
+//               FUNÇÕES AUXILIARES E DE ESTRUTURAS
+// ===============================================================
+
+/**
+ * @brief Função hash simples para transformar uma string em um índice da tabela.
+ * Soma os valores ASCII dos caracteres. É simples, mas funcional para este caso.
+ */
+unsigned int hashFunction(char* str) {
+    unsigned int hash = 0;
+    for (int i = 0; str[i] != '\0'; i++) {
+        hash += str[i];
+    }
+    return hash % HASH_SIZE;
+}
+
+
+/**
+ * @brief Insere uma associação pista-suspeito na tabela hash.
+ */
+void inserirNaHash(HashNode** tabela, char* pista, char* suspeito) {
+    unsigned int index = hashFunction(pista);
+    HashNode* novo = (HashNode*) malloc(sizeof(HashNode));
+    strcpy(novo->pista, pista);
+    strcpy(novo->suspeito, suspeito);
+    
+    // Insere no início da lista encadeada (mais fácil)
+    novo->proximo = tabela[index];
+    tabela[index] = novo;
+}
+
+
+/**
+ * @brief Procura um suspeito na tabela hash com base em uma pista.
+ */
+char* encontrarSuspeito(HashNode** tabela, char* pista) {
+    unsigned int index = hashFunction(pista);
+    HashNode* atual = tabela[index];
+    
+    // Percorre a lista encadeada naquele índice
+    while (atual) {
+        if (strcmp(atual->pista, pista) == 0) {
+            return atual->suspeito;
+        }
+        atual = atual->proximo;
+    }
+    return NULL; // Não encontrou
+}
+
+
+/**
+ * @brief Percorre a BST em ordem para mostrar as pistas em ordem alfabética.
+ */
+void mostrarPistasColetadas(PistaNode* raiz) {
+    if (raiz != NULL) {
+        mostrarPistasColetadas(raiz->esquerda);
+        printf(" - %s\n", raiz->pista);
+        mostrarPistasColetadas(raiz->direita);
+    }
+}
+
+
+// ===============================================================
+//               FUNÇÕES DE LIMPEZA DE MEMÓRIA
+// ===============================================================
+
+void liberarMapa(Sala* salaAtual) {
+    if (salaAtual == NULL) return;
+    liberarMapa(salaAtual->esquerda);
+    liberarMapa(salaAtual->direita);
+    free(salaAtual);
+}
+
+void liberarPistas(PistaNode* raiz) {
+    if (raiz == NULL) return;
+    liberarPistas(raiz->esquerda);
+    liberarPistas(raiz->direita);
+    free(raiz);
+}
+
+void liberarTabelaHash(HashNode** tabela) {
+    for (int i = 0; i < HASH_SIZE; i++) {
+        HashNode* atual = tabela[i];
+        while (atual) {
+            HashNode* temp = atual;
+            atual = atual->proximo;
+            free(temp);
+        }
+    }
 }
